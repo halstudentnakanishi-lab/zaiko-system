@@ -1,0 +1,603 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Inventory Manager</title>
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background:#0b0f17; color:#e8eefc; }
+    a { color:#8ab4ff; }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 20px; }
+    .topbar { display:flex; align-items:center; justify-content:space-between; gap:12px; padding: 14px 20px; background:#0f1626; border-bottom:1px solid #1d2a44; position:sticky; top:0; }
+    .brand { font-weight: 700; letter-spacing: .3px; }
+    .pill { font-size:12px; padding: 4px 10px; border: 1px solid #2a3a5f; border-radius: 999px; color:#bcd0ff; }
+    .btn { cursor:pointer; border:1px solid #2a3a5f; background:#14203a; color:#e8eefc; padding: 8px 12px; border-radius: 10px; }
+    .btn:hover { background:#18284b; }
+    .btn.primary { background:#2456ff; border-color:#2456ff; }
+    .btn.primary:hover { background:#1f4ae0; }
+    .btn.danger { background:#3a1420; border-color:#5f2a3a; }
+    .btn.ghost { background:transparent; }
+    .grid { display:grid; grid-template-columns: 1.2fr .8fr; gap:16px; }
+    @media (max-width: 980px){ .grid{ grid-template-columns: 1fr; } }
+    .card { background:#0f1626; border:1px solid #1d2a44; border-radius: 14px; padding: 14px; }
+    .card h2 { margin: 0 0 10px; font-size: 16px; }
+    .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .muted { color:#9fb0d9; font-size: 12px; }
+    input, select, textarea {
+      background:#0b0f17; border:1px solid #2a3a5f; color:#e8eefc;
+      padding:8px 10px; border-radius:10px; outline:none;
+    }
+    input:focus, select:focus, textarea:focus, input:-webkit-autofill,input:-webkit-autofill:hover, input:-webkit-autofill:focus{ border-color:#4a78ff; -webkit-text-fill-color: #fff !important; transition: background-color 5000s ease-in-out 0s; }
+    table { width:100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid #1d2a44; padding: 8px; font-size: 13px; }
+    th { text-align:left; color:#bcd0ff; font-weight: 600; }
+    tr:hover td { background:#0b1222; }
+    .tag { display:inline-block; font-size:12px; padding:2px 8px; border-radius:999px; border:1px solid #2a3a5f; color:#bcd0ff; }
+    .ok { color:#6ee7b7; }
+    .warn { color:#fff797; }
+    .bad { color:#fb7185; }
+    .right { margin-left:auto; }
+    .toast {
+      position: fixed; right: 16px; bottom: 16px;
+      background:#0f1626; border:1px solid #1d2a44; border-radius: 12px;
+      padding: 10px 12px; min-width: 240px; box-shadow: 0 12px 40px rgba(0,0,0,.35);
+      display:none;
+    }
+    .toast.show { display:block; }
+    .toast .t { font-weight:700; margin-bottom: 2px; }
+    .toast .m { font-size:12px; color:#bcd0ff; }
+    .nav { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="row" style="gap:10px">
+      <div class="brand">Inventory Manager</div>
+      <span id="envPill" class="pill">API: 127.0.0.1:8000</span>
+    </div>
+    <div class="row" style="gap:10px">
+      <div id="who" class="muted"></div>
+      <button id="btnLogout" class="btn danger" style="display:none" onclick="logout()">ログアウト</button>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div id="app"></div>
+  </div>
+
+  <div id="toast" class="toast">
+    <div id="toastTitle" class="t">通知</div>
+    <div id="toastMsg" class="m"></div>
+  </div>
+
+<script>
+/** =========================
+ *  設定
+ *  ========================= */
+const API_BASE = ""; // 同一オリジン運用（/auth/login などに投げる）なので空でOK
+
+/** =========================
+ *  小物
+ *  ========================= */
+function toast(title, msg, ms=2600){
+  const el = document.getElementById("toast");
+  document.getElementById("toastTitle").textContent = title;
+  document.getElementById("toastMsg").textContent = msg;
+  el.classList.add("show");
+  setTimeout(()=> el.classList.remove("show"), ms);
+}
+
+function getToken(){ return localStorage.getItem("access_token"); }
+function getRole(){ return localStorage.getItem("role"); }
+function setSession({access_token, role, name, user_id}){
+  localStorage.setItem("access_token", access_token);
+  if (role) localStorage.setItem("role", role);
+  if (name) localStorage.setItem("name", name);
+  if (user_id != null) localStorage.setItem("user_id", String(user_id));
+}
+function clearSession(){
+  localStorage.removeItem("access_token");
+  localStorage.removeItem("role");
+  localStorage.removeItem("name");
+  localStorage.removeItem("user_id");
+}
+
+function authHeaders(){
+  const t = getToken();
+  return t ? { "Authorization": `Bearer ${t}` } : {};
+}
+
+async function api(url, options={}){
+  const res = await fetch(API_BASE + url, {
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+      ...authHeaders()
+    }
+  });
+
+  // 401ならログイン画面へ戻す（デモで事故らない）
+  if (res.status === 401) {
+    clearSession();
+    render();
+    throw new Error("401 Not authenticated");
+  }
+
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+
+  if (!res.ok) {
+    const msg = (data && data.detail) ? data.detail : (typeof data === "string" ? data : "API Error");
+    throw new Error(`${res.status} ${msg}`);
+  }
+  return data;
+}
+
+function setTopbar(){
+  const token = getToken();
+  const who = document.getElementById("who");
+  const btnLogout = document.getElementById("btnLogout");
+
+  if (!token) {
+    who.textContent = "未ログイン";
+    btnLogout.style.display = "none";
+    return;
+  }
+
+  const role = getRole() || "unknown";
+  const name = localStorage.getItem("name") || "User";
+  who.innerHTML = `ログイン中：<span class="tag">${name}</span> <span class="tag">${role}</span>`;
+  btnLogout.style.display = "inline-block";
+}
+
+/** =========================
+ *  画面：ログイン
+ *  ========================= */
+function renderLogin(){
+  setTopbar();
+  document.getElementById("app").innerHTML = `
+    <div class="card" style="max-width:520px;margin:30px auto;">
+      <h2>ログイン</h2>
+      <div class="muted">ユーザーIDとパスワードでログインします</div>
+      <div style="height:12px"></div>
+
+      <div class="row">
+        <input id="user_id" type="number" placeholder="User ID" style="flex:1;min-width:220px" />
+        <input id="password" type="password" placeholder="password" style="flex:1;min-width:220px" />
+      </div>
+      <div style="height:12px"></div>
+
+      <div class="row">
+        <button class="btn primary" onclick="login()">ログイン</button>
+        <span class="muted">Swaggerで200なら、ここも動くのが正常です。</span>
+      </div>
+
+      <div style="height:14px"></div>
+      <div class="muted">
+        Swagger: <a href="/docs" target="_blank">/docs</a>
+      </div>
+    </div>
+  `;
+}
+
+async function login(){
+  const user_id = Number(document.getElementById("user_id").value);
+  const password = document.getElementById("password").value;
+
+  if (!user_id || user_id <= 0 || !password) {
+    toast("入力不足", "User ID / password を入力してください");
+    return;
+  }
+
+  try {
+    const data = await api("/auth/login", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ user_id, password })
+    });
+
+    setSession({
+      access_token: data.access_token,
+      role: data.role,
+      name: data.name,
+      user_id: data.user_id
+    });
+
+    toast("ログイン成功", `${data.name} (${data.role})`);
+    renderDashboard(); // ログイン後はダッシュボードへ
+  } catch (e){
+    toast("ログイン失敗", e.message);
+  }
+}
+
+
+function logout(){
+  clearSession();
+  toast("ログアウト", "ログイン画面へ戻りました");
+  render();
+}
+
+/** =========================
+ *  画面：ダッシュボード
+ *  ========================= */
+let state = {
+  selectedProductId: null,
+  selectedProductName: null
+};
+
+function renderDashboard(){
+  setTopbar();
+  const role = getRole();
+
+  document.getElementById("app").innerHTML = `
+    <div class="row" style="margin-bottom:12px">
+      <div class="nav">
+        <button class="btn" onclick="renderDashboard()">ダッシュボード</button>
+        ${role === "admin" ? `<button class="btn" onclick="renderUsers()">ユーザー管理</button>` : ``}
+      </div>
+      <div class="right muted">tokenが無い場合はログイン画面に戻ります</div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>在庫一覧</h2>
+        <div class="muted">クリックした商品が「入出庫フォーム」に反映されます。</div>
+        <div style="height:10px"></div>
+        <div id="stocksBox" class="muted">読み込み中...</div>
+      </div>
+
+      <div class="card">
+        <h2>入出庫</h2>
+        <div class="muted">ログインユーザー（token）から user_id を使用します。</div>
+        <div style="height:10px"></div>
+
+        <div class="row">
+          <input id="tx_product_id" type="number" placeholder="product_id" style="width:140px" />
+          <select id="tx_change_type">
+            <option value="IN">IN（入庫）</option>
+            <option value="OUT">OUT（出庫）</option>
+          </select>
+          <input id="tx_quantity" type="number" placeholder="quantity" style="width:140px" />
+        </div>
+
+        <div style="height:10px"></div>
+        <div class="row">
+          <select id="tx_reason_code" style="min-width:180px">
+            <option value="">reason_code（任意）</option>
+            <option value="SALE">SALE（販売）</option>
+            <option value="PURCHASE">PURCHASE（仕入）</option>
+            <option value="ADJUST">ADJUST（棚卸調整）</option>
+            <option value="DAMAGED">DAMAGED（破損）</option>
+            <option value="RETURN">RETURN（返品）</option>
+          </select>
+          <input id="tx_note" placeholder="note（任意）" style="flex:1;min-width:220px" />
+        </div>
+
+        <div style="height:10px"></div>
+        <div class="row">
+          <button class="btn primary" onclick="postTransaction()">実行</button>
+          <span id="tx_hint" class="muted"></span>
+        </div>
+
+        <div style="height:14px"></div>
+        <div class="muted">
+          選択中： <span id="selectedInfo" class="tag">なし</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="height:16px"></div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>在庫履歴（最新100件）</h2>
+        <div class="muted">誰が・いつ・何を・どう動かしたかを追跡できます。</div>
+        <div style="height:10px"></div>
+        <div id="txBox" class="muted">読み込み中...</div>
+      </div>
+
+      <div class="card">
+        <h2>AI分析（発注提案）</h2>
+        <div class="muted">過去の出庫（OUT）から平均消費を推定し、必要在庫を計算します。</div>
+        <div style="height:10px"></div>
+
+        <div class="row">
+          <input id="ai_days" type="number" value="14" style="width:110px" />
+          <input id="ai_lead" type="number" value="7" style="width:110px" />
+          <input id="ai_safety" type="number" value="3" style="width:110px" />
+          <input id="ai_reason" placeholder="reason（例: SALE）" style="width:160px" />
+          <button class="btn" onclick="loadAI()">分析更新</button>
+        </div>
+        <div class="muted">days / lead_time / safety を変えると推奨が出やすくなります</div>
+
+        <div style="height:10px"></div>
+        <div id="aiBox" class="muted">読み込み中...</div>
+      </div>
+    </div>
+  `;
+
+  refreshAll();
+}
+
+async function refreshAll(){
+  await Promise.all([
+    loadStocks(),
+    loadTransactions(),
+    loadAI()
+  ]);
+}
+
+async function loadStocks(){
+  try {
+    const rows = await api("/stocks");
+    const html = `
+      <table>
+        <thead>
+          <tr><th>ID</th><th>商品</th><th>カテゴリ</th><th>在庫</th></tr>
+        </thead>
+        <tbody>
+          ${rows.map(r => `
+            <tr onclick="selectProduct(${r.product_id}, '${escapeHtml(r.product_name)}')">
+              <td>${r.product_id}</td>
+              <td>${escapeHtml(r.product_name)}</td>
+              <td>${escapeHtml(r.category_name || "")}</td>
+              <td><b>${r.quantity}</b></td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    `;
+    document.getElementById("stocksBox").innerHTML = html;
+  } catch (e){
+    document.getElementById("stocksBox").innerHTML = `<span class="bad">${escapeHtml(e.message)}</span>`;
+  }
+}
+
+function selectProduct(id, name){
+  state.selectedProductId = id;
+  state.selectedProductName = name;
+  document.getElementById("tx_product_id").value = id;
+  document.getElementById("selectedInfo").textContent = `${name} (#${id})`;
+  document.getElementById("tx_hint").textContent = `product_id が ${id} にセットされました`;
+}
+
+async function postTransaction(){
+  const product_id = Number(document.getElementById("tx_product_id").value);
+  const change_type = document.getElementById("tx_change_type").value;
+  const quantity = Number(document.getElementById("tx_quantity").value);
+  const reason_code = document.getElementById("tx_reason_code").value || null;
+  const note = document.getElementById("tx_note").value || null;
+
+  if (!product_id || product_id <= 0) { toast("入力不足", "product_id を入力/選択してください"); return; }
+  if (!quantity || quantity <= 0) { toast("入力不足", "quantity は1以上で入力してください"); return; }
+
+  try {
+    const res = await api("/stocks/transactions", {
+      method:"POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ product_id, change_type, quantity, reason_code, note })
+    });
+    toast("更新完了", `新しい在庫数: ${res.new_quantity}`);
+    document.getElementById("tx_quantity").value = "";
+    document.getElementById("tx_note").value = "";
+    await refreshAll();
+  } catch(e){
+    toast("失敗", e.message);
+  }
+}
+
+async function loadTransactions(){
+  try {
+    const rows = await api("/stocks/transactions");
+    const html = `
+      <table>
+        <thead>
+          <tr>
+            <th>日時</th><th>ユーザー</th><th>商品</th><th>種別</th><th>qty</th><th>before→after</th><th>reason</th><th>note</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(r => `
+            <tr>
+              <td>${escapeHtml(String(r.created_at || ""))}</td>
+              <td>${escapeHtml(r.user_name || "")}</td>
+              <td>${escapeHtml(r.product_name || "")}</td>
+              <td><span class="tag">${escapeHtml(r.change_type || "")}</span></td>
+              <td><b>${r.quantity}</b></td>
+              <td class="muted">${r.before_quantity ?? "?"} → ${r.after_quantity ?? "?"}</td>
+              <td class="muted">${escapeHtml(r.reason_code || "")}</td>
+              <td class="muted">${escapeHtml(r.note || "")}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    `;
+    document.getElementById("txBox").innerHTML = html;
+  } catch(e){
+    document.getElementById("txBox").innerHTML = `<span class="bad">${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function loadAI(){
+  try {
+    const days = Number(document.getElementById("ai_days").value || 14);
+    const lead = Number(document.getElementById("ai_lead").value || 7);
+    const safety = Number(document.getElementById("ai_safety").value || 3);
+    const reason = (document.getElementById("ai_reason").value || "").trim();
+
+    const qs = new URLSearchParams();
+    qs.set("days", String(days));
+    qs.set("lead_time_days", String(lead));
+    qs.set("safety_days", String(safety));
+    if (reason) qs.set("reason", reason);
+
+    const rows = await api("/ai/analysis/stock_trend?" + qs.toString());
+
+    const html = `
+      <table>
+        <thead>
+          <tr>
+            <th>商品</th><th>在庫</th><th>平均出庫/日</th><th>残り日数</th><th>推奨</th><th>推奨数</th><th>理由</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(r => {
+            const rec = r.recommend ? "〇" : "";
+            const cls = r.recommend ? "warn" : "muted";
+            return `
+              <tr>
+                <td>${escapeHtml(r.product_name)} <span class="muted">(#${r.product_id})</span></td>
+                <td><b>${r.current_stock}</b></td>
+                <td class="muted">${r.avg_daily_out}</td>
+                <td class="muted">${r.estimated_days_left ?? "—"}</td>
+                <td class="${cls}">${rec}</td>
+                <td class="${cls}"><b>${r.recommended_order_qty}</b></td>
+                <td class="muted">${escapeHtml(r.reason || "")}</td>
+              </tr>
+            `;
+          }).join("")}
+        </tbody>
+      </table>
+      <div class="muted" style="margin-top:8px">
+        horizon = lead_time_days + safety_days（確保したい日数） / reason指定時はそのreason_codeのOUTのみで分析
+      </div>
+    `;
+    document.getElementById("aiBox").innerHTML = html;
+  } catch(e){
+    document.getElementById("aiBox").innerHTML = `<span class="bad">${escapeHtml(e.message)}</span>`;
+  }
+}
+
+/** =========================
+ *  画面：ユーザー管理（adminのみ）
+ *  ※ API側に GET /users が無い場合はエラー表示になります
+ *  ========================= */
+function renderUsers(){
+  setTopbar();
+  const role = getRole();
+  if (role !== "admin") {
+    toast("権限なし", "ユーザー管理は admin のみです");
+    renderDashboard();
+    return;
+  }
+
+  document.getElementById("app").innerHTML = `
+    <div class="row" style="margin-bottom:12px">
+      <div class="nav">
+        <button class="btn" onclick="renderDashboard()">← 戻る</button>
+        <span class="tag">ユーザー管理（admin）</span>
+      </div>
+      <div class="right muted">GET /users / POST /users を使います</div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>ユーザー一覧</h2>
+        <div id="usersBox" class="muted">読み込み中...</div>
+      </div>
+
+      <div class="card">
+        <h2>ユーザー追加</h2>
+        <div class="row">
+          <input id="u_name" placeholder="name" style="flex:1;min-width:160px" />
+          <select id="u_role">
+            <option value="staff">staff</option>
+            <option value="admin">admin</option>
+          </select>
+        </div>
+        <div style="height:10px"></div>
+        <div class="row">
+          <input id="u_email" placeholder="email" style="flex:1;min-width:200px" />
+          <input id="u_pass" type="password" placeholder="password" style="flex:1;min-width:200px" />
+        </div>
+        <div style="height:10px"></div>
+        <div class="row">
+          <button class="btn primary" onclick="createUser()">追加</button>
+          <span class="muted">※ API側に /users が実装済みである必要があります</span>
+        </div>
+      </div>
+    </div>
+  `;
+
+  loadUsers();
+}
+
+async function loadUsers(){
+  try {
+    const rows = await api("/users");
+    const html = `
+      <table>
+        <thead><tr><th>ID</th><th>名前</th><th>email</th><th>role</th><th>active</th></tr></thead>
+        <tbody>
+          ${rows.map(u => `
+            <tr>
+              <td>${u.user_id}</td>
+              <td>${escapeHtml(u.name || "")}</td>
+              <td class="muted">${escapeHtml(u.email || "")}</td>
+              <td><span class="tag">${escapeHtml(u.role || "")}</span></td>
+              <td class="muted">${u.is_active ?? "?"}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    `;
+    document.getElementById("usersBox").innerHTML = html;
+  } catch(e){
+    document.getElementById("usersBox").innerHTML =
+      `<span class="bad">${escapeHtml(e.message)}</span>
+       <div class="muted" style="margin-top:8px">
+         ヒント：API側に <b>GET /users</b> がまだ無い場合、次の工程で追加します。
+       </div>`;
+  }
+}
+
+async function createUser(){
+  const name = document.getElementById("u_name").value.trim();
+  const email = document.getElementById("u_email").value.trim();
+  const password = document.getElementById("u_pass").value;
+  const role = document.getElementById("u_role").value;
+
+  if (!name || !email || !password) { toast("入力不足", "name/email/password を入力してください"); return; }
+
+  try {
+    await api("/users", {
+      method:"POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ name, email, password, role })
+    });
+    toast("作成完了", `${email} を追加しました`);
+    document.getElementById("u_name").value = "";
+    document.getElementById("u_email").value = "";
+    document.getElementById("u_pass").value = "";
+    await loadUsers();
+  } catch(e){
+    toast("失敗", e.message);
+  }
+}
+
+/** =========================
+ *  HTMLエスケープ（XSS予防）
+ *  ========================= */
+function escapeHtml(s){
+  return String(s)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+/** =========================
+ *  起動
+ *  ========================= */
+function render(){
+  const token = getToken();
+  if (!token) renderLogin();
+  else renderDashboard();
+}
+
+render();
+</script>
+</body>
+</html>
