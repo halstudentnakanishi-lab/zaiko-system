@@ -3,7 +3,7 @@
 Python / FastAPI と MySQL系データベースを使った、個人制作の在庫管理Webアプリです。
 ブラウザーで在庫を確認し、入庫・出庫を記録できます。出庫履歴から平均消費量を求め、在庫が何日分あるかと発注数量の目安を表示します。
 
-> **学習・ポートフォリオ用の開発途中の作品です。** 以下は公開コードで確認できる実装内容です。付属SQLとコードには差分があり、初期設定が必要です。今回のREADME更新では、DBを含む実動作の再検証は行っていません。
+> **学習・ポートフォリオ用の開発途中の作品です。** 新規DB用SQLとAPIの列定義をそろえ、MariaDB 10.4.28で入出庫・履歴・発注提案などのAPI統合テストを実施しています。実店舗での運用やブラウザーを通した全操作の確認は行っていません。
 
 ## 主な機能
 
@@ -69,7 +69,7 @@ FastAPI（認証・入力チェック・在庫処理・集計）
 | --- | --- |
 | [main.py](Portfolio_2026/main.py) | リクエストモデル、JWT認証、在庫更新、履歴取得、発注提案、管理者API |
 | [index.html](Portfolio_2026/static/index.html) | ログイン、ダッシュボード、履歴の絞り込み、ユーザー管理の画面とJavaScript |
-| [inventory_db.sql](Portfolio_2026/inventory_db.sql) | テーブル定義と初期データ。現在のAPIに対して一部の列が不足 |
+| [inventory_db.sql](Portfolio_2026/inventory_db.sql) | 現在のAPIに対応したテーブル定義と初期データ |
 | [test_db.py](Portfolio_2026/test_db.py) | DB接続とカテゴリ取得を確認する単発スクリプト。自動テスト一式ではありません |
 
 ## ローカル起動の準備
@@ -89,16 +89,9 @@ py -m venv .venv
 
 検証用の新しい `inventory_db` を作成し、phpMyAdminなどで `Portfolio_2026/inventory_db.sql` をインポートします。既存の業務用DBには適用しないでください。
 
-付属SQLには、現在のAPIが参照する次の3列がありません。**付属SQLを新規インポートした検証用DB**で、以下のSQLを実行する必要があります。すでに列があるDBには重複適用しないでください。
+新規DBには不足していた `reason_code`、`before_quantity`、`after_quantity` も作成されます。初期データの過去の履歴は、当時の値が不明なためこれらの列を `NULL` としています。
 
-```sql
-ALTER TABLE inventory_transactions
-  ADD COLUMN reason_code VARCHAR(50) NULL,
-  ADD COLUMN before_quantity INT NULL,
-  ADD COLUMN after_quantity INT NULL;
-```
-
-既存履歴の理由・変更前後の数量は、この操作では復元されません。
+**旧版SQLで作成済みのMariaDBの場合：** データをバックアップしたうえで、対象DBを選択して [移行SQL](Portfolio_2026/migrations/001_transaction_details.sql) を実行します。既存テーブルやデータを削除せず、不足列だけを追加します。MariaDB 10.4.28では繰り返し適用してもデータが保持されることを検証しています。MySQLでの同じ構文の互換性は未確認です。
 
 `main.py` の `get_conn()` を自分のローカルDB接続設定に合わせます。現在のコードは `localhost` / ユーザー `root` / 空パスワードを前提にしています。
 
@@ -124,13 +117,35 @@ cd Portfolio_2026
 - アプリ画面：<http://127.0.0.1:8000/app/>
 - API仕様・操作画面：<http://127.0.0.1:8000/docs>
 
+## 今回の修正と検証
+
+- 新規作成用SQLに履歴の3列を追加し、既存MariaDB用の移行SQLを用意しました。
+- 入出庫成功メッセージはAPIの `after_quantity` を表示するよう修正しました。
+- ユーザー一覧から、API・DBに存在しない有効状態の列を取り除きました。
+- 現行画面 `index.html` と旧画面 `index_test.html` の両方を修正しました。
+
+検証環境：Python 3.14、MariaDB 10.4.28、FastAPI 0.162.0、PyMySQL 1.2.3、Passlib 1.7.4、bcrypt 4.0.1、PyJWT 2.15.1、httpx 0.28.1、pytest 9.1.1。
+
+**API統合テスト6件が成功：** 新規DBと旧版相当DBへの移行の2経路で、入出庫・履歴・発注提案、不正入力によるデータ非変更、管理者／スタッフのユーザー参照権限を確認しました。移行SQLは2回適用し、既存履歴が残ることも確認しています。認証済みユーザーはテストで差し替えているため、ログインそのものの検証は含みません。
+
+**画面関数の確認：** Node.jsで両HTMLのJavaScriptを実行し、在庫数の成功メッセージとユーザー一覧の表示を確認しました。実ブラウザーでの見た目・クリック操作のテストとは異なります。
+
+テストを再実行する場合は、通常の業務用DBとは別に検証用MariaDBを起動してください。テストは `zaiko_test_` で始まる一時DBを作成し、終了時にそのDBだけを削除します。
+
+```powershell
+# 上記の依存パッケージと httpx / pytest、Node.js が必要
+$env:ZAIKO_TEST_DB_PORT = "13316" # 自分の検証用MariaDBのポート
+# パスワードが必要なら ZAIKO_TEST_DB_PASSWORD に設定
+.\.venv\Scripts\python.exe -m pytest tests/test_inventory_integration.py -q
+node tests/check_ui.cjs
+```
+
 ## 現在の課題・次に改善したいこと
 
 - **環境の再現性：** 依存バージョンの固定、DBマイグレーション、初期管理者の作成手順の自動化。
 - **同時更新：** 行ロックなどを追加し、複数人が同時に在庫を操作した場合の整合性を確認する。
-- **画面とAPIの整合：** 入出庫成功メッセージがAPIに存在しない `new_quantity` を参照するため、`after_quantity` に合わせる必要がある。ユーザー一覧にもAPIが返さない `is_active` の表示が残っている。
 - **認証・設定：** JWTの固定の仮秘密鍵、DB設定の直接記述、トークンの一部を出力するデバッグログを見直す。商品・在庫の参照APIの公開範囲も検討する。
-- **テスト：** 入出庫、在庫不足、権限、発注提案の境界値を自動テストにする。
+- **テストの拡充：** ログイン、同時更新、発注提案の境界値やブラウザー経由の操作を検証する。
 - **画面説明：** 計算の実態に合わせて「AI分析」の表記を見直し、操作画面の画像を追加する。
 
 ## 制作と生成AIについて

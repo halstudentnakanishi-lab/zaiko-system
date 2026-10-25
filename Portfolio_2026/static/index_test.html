@@ -378,7 +378,7 @@ async function postTransaction(){
       headers: {"Content-Type":"application/json"},
       body: JSON.stringify({ product_id, change_type, quantity, reason_code, note })
     });
-    toast("更新完了", `新しい在庫数: ${res.new_quantity}`);
+    toast("更新完了", `新しい在庫数: ${res.after_quantity}`);
     document.getElementById("tx_quantity").value = "";
     document.getElementById("tx_note").value = "";
     await refreshAll();
@@ -528,7 +528,7 @@ async function loadUsers(){
     const rows = await api("/users");
     const html = `
       <table>
-        <thead><tr><th>ID</th><th>名前</th><th>email</th><th>role</th><th>active</th></tr></thead>
+        <thead><tr><th>ID</th><th>名前</th><th>email</th><th>role</th></tr></thead>
         <tbody>
           ${rows.map(u => `
             <tr>
@@ -536,7 +536,6 @@ async function loadUsers(){
               <td>${escapeHtml(u.name || "")}</td>
               <td class="muted">${escapeHtml(u.email || "")}</td>
               <td><span class="tag">${escapeHtml(u.role || "")}</span></td>
-              <td class="muted">${u.is_active ?? "?"}</td>
             </tr>
           `).join("")}
         </tbody>

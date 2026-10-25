@@ -54,6 +54,9 @@ CREATE TABLE `inventory_transactions` (
   `user_id` int(11) NOT NULL,
   `change_type` enum('IN','OUT') NOT NULL,
   `quantity` int(11) NOT NULL,
+  `reason_code` varchar(50) DEFAULT NULL,
+  `before_quantity` int(11) DEFAULT NULL,
+  `after_quantity` int(11) DEFAULT NULL,
   `note` varchar(255) DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
